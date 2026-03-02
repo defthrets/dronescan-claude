@@ -56,54 +56,94 @@ function applyTheme(t) {
 
 // ── GPS Cascade ───────────────────────────────────────────────────────────
 /**
- * Try GPS in order:
- *  1. Browser Geolocation API (silent, 4s timeout)
- *  2. IP-based geolocation (ipapi.co)
- *  3. Show "SET LOCATION" prompt on map
+ * GPS acquisition strategy:
+ *  1. Start watchPosition immediately (high-accuracy, prompts permission).
+ *  2. Wait up to 3 s for first fix; meanwhile fall through to IP geoloc
+ *     as a temporary city-level placeholder.
+ *  3. Once browser GPS arrives it auto-upgrades (watch stays active).
+ *
+ * HTTPS REQUIRED FOR PHONE GPS OVER LAN:
+ *  Mobile browsers block navigator.geolocation on plain http:// when the
+ *  host is not localhost.  Restart the server with --ssl and open
+ *  https://<your-ip>:8443 on the phone — GPS will then work.
  */
 async function startGPSCascade() {
-  // 1. Browser GPS (silent attempt)
-  const browserOk = await tryBrowserGPS(false);
-  if (browserOk) return;
+  setGPSStatus('⌛ GPS: requesting permission…', false);
 
-  // 2. IP geolocation fallback
-  const ipOk = await tryIPGeolocation();
-  if (ipOk) return;
+  // Start persistent high-accuracy watch (triggers permission prompt)
+  startBrowserGPSWatch();
 
-  // 3. Prompt user to click on map
-  showSetLocationPrompt();
+  // Wait up to 3 s for a browser GPS fix before trying the IP fallback
+  await new Promise(resolve => {
+    const poll = setInterval(() => {
+      if (gpsSource === 'browser' || gpsSource === 'hardware') {
+        clearInterval(poll); resolve();
+      }
+    }, 200);
+    setTimeout(() => { clearInterval(poll); resolve(); }, 3000);
+  });
+
+  if (gpsSource === 'browser' || gpsSource === 'hardware') return;
+
+  // No GPS yet — use IP geolocation as a temporary placeholder
+  await tryIPGeolocation();
+
+  if (gpsSource === 'none') showSetLocationPrompt();
 }
 
-function tryBrowserGPS(showErrors = true) {
-  return new Promise(resolve => {
-    if (!navigator.geolocation) { resolve(false); return; }
+/**
+ * Start (or restart) a persistent high-accuracy GPS watch.
+ * On HTTPS pages  → uses device GPS chip (~3 m accuracy).
+ * On plain HTTP   → browser blocks this; we show a --ssl tip.
+ */
+function startBrowserGPSWatch() {
+  if (!navigator.geolocation) {
+    setGPSStatus('GPS: not supported by browser', false);
+    _showSSLTip();
+    return;
+  }
 
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        onGPSFix(pos.coords.latitude, pos.coords.longitude, 0,
-                 'browser', pos.coords.accuracy);
-        // Start watching for updates
-        if (gpsWatchId) navigator.geolocation.clearWatch(gpsWatchId);
-        gpsWatchId = navigator.geolocation.watchPosition(
-          p => onGPSFix(p.coords.latitude, p.coords.longitude, 0,
-                        'browser', p.coords.accuracy),
-          () => {},
-          { enableHighAccuracy: true, maximumAge: 5000 }
-        );
-        resolve(true);
-      },
-      err => {
-        if (showErrors) console.warn('Browser GPS failed:', err.message);
-        resolve(false);
-      },
-      { timeout: 4000, maximumAge: 30000 }
+  if (gpsWatchId !== null) {
+    navigator.geolocation.clearWatch(gpsWatchId);
+    gpsWatchId = null;
+  }
+
+  gpsWatchId = navigator.geolocation.watchPosition(
+    pos => {
+      onGPSFix(
+        pos.coords.latitude,
+        pos.coords.longitude,
+        pos.coords.altitude || 0,
+        'browser',
+        pos.coords.accuracy
+      );
+    },
+    err => {
+      console.warn('GPS watch error:', err.message, '(code:', err.code, ')');
+      if (err.code === 1) {           // PERMISSION_DENIED
+        if (gpsSource === 'none') setGPSStatus('GPS permission denied', false);
+        _showSSLTip();
+      }
+      // code 2 = POSITION_UNAVAILABLE, code 3 = TIMEOUT — keep waiting
+    },
+    { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+  );
+}
+
+/** Show --ssl tip when browsing over plain HTTP on a LAN address. */
+function _showSSLTip() {
+  if (location.protocol !== 'https:' &&
+      !['localhost', '127.0.0.1'].includes(location.hostname)) {
+    triggerAlert(
+      '📍 Exact GPS needs HTTPS — restart the server with --ssl, ' +
+      'then open https://' + location.hostname + ':8443 on your phone'
     );
-  });
+  }
 }
 
 async function tryIPGeolocation() {
   try {
-    setGPSStatus('Locating via IP…', false);
+    setGPSStatus('Locating via IP… (city-level only)', false);
     const r = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(5000) });
     const d = await r.json();
     if (d.latitude && d.longitude) {
@@ -116,10 +156,9 @@ async function tryIPGeolocation() {
 
 function showSetLocationPrompt() {
   setGPSStatus('CLICK MAP TO SET LOCATION', false);
-  document.getElementById('gpsStatus').style.cursor = 'pointer';
-  document.getElementById('gpsStatus').onclick = activateClickToSet;
-
-  // Also show map instruction overlay
+  const el = document.getElementById('gpsStatus');
+  el.style.cursor = 'pointer';
+  el.onclick = activateClickToSet;
   triggerAlert('GPS unavailable — click anywhere on the map to set your location');
 }
 
@@ -130,8 +169,18 @@ function activateClickToSet() {
   triggerAlert('Click your location on the map');
 }
 
-// Called when GPS fix from any source
+/**
+ * Called when a GPS fix arrives from any source.
+ * Source priority (higher number wins):
+ *   hardware / browser = 4  >  manual = 2  >  ip = 1  >  none = 0
+ * This prevents an IP-geoloc result from overwriting a real GPS fix.
+ */
+const GPS_PRIORITY = { hardware: 4, browser: 4, manual: 2, ip: 1, none: 0 };
+
 function onGPSFix(lat, lon, alt = 0, source = 'browser', accuracy = null) {
+  // Don't downgrade from a higher-priority source
+  if ((GPS_PRIORITY[gpsSource] || 0) > (GPS_PRIORITY[source] || 0)) return;
+
   observerPos = { lat, lon };
   gpsSource   = source;
 
@@ -142,16 +191,31 @@ function onGPSFix(lat, lon, alt = 0, source = 'browser', accuracy = null) {
     body: JSON.stringify({ lat, lon, alt, accuracy, source }),
   }).catch(() => {});
 
-  // Label
-  const labels = { hardware: 'GPS', browser: 'GPS', ip: 'IP-LOC', manual: 'MANUAL' };
-  const label  = labels[source] || source.toUpperCase();
+  // Build status label
   const accTxt = accuracy ? ` ±${Math.round(accuracy)}m` : '';
-  setGPSStatus(`${label}: ${lat.toFixed(5)}, ${lon.toFixed(5)}${accTxt}`, true);
+  let statusText, statusActive;
+  switch (source) {
+    case 'hardware':
+    case 'browser':
+      statusText   = `GPS ✓  ${lat.toFixed(5)}, ${lon.toFixed(5)}${accTxt}`;
+      statusActive = true;
+      break;
+    case 'ip':
+      statusText   = `⚠ CITY APPROX  ${lat.toFixed(3)}, ${lon.toFixed(3)}  — use --ssl for exact GPS`;
+      statusActive = false;
+      break;
+    case 'manual':
+      statusText   = `MANUAL  ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+      statusActive = true;
+      break;
+    default:
+      statusText   = `${source.toUpperCase()}  ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+      statusActive = true;
+  }
+  setGPSStatus(statusText, statusActive);
 
-  // Update observer marker
+  // Update observer marker and device positions
   placeObserverMarker(lat, lon, accuracy);
-
-  // Re-position all device markers
   updateMapMarkers();
 }
 
@@ -184,13 +248,26 @@ async function requestBrowserGPS() {
   const btn = document.getElementById('gpsBtn');
   if (btn) btn.textContent = '⊕ GPS…';
 
-  const ok = await tryBrowserGPS(true);
-  if (!ok) {
-    // Try IP fallback
+  // (Re-)start the watch — will re-prompt for permission if previously denied
+  startBrowserGPSWatch();
+
+  // Wait up to 8 s for a GPS fix
+  await new Promise(resolve => {
+    const poll = setInterval(() => {
+      if (gpsSource === 'browser') { clearInterval(poll); resolve(); }
+    }, 200);
+    setTimeout(() => { clearInterval(poll); resolve(); }, 8000);
+  });
+
+  if (gpsSource !== 'browser') {
     const ipOk = await tryIPGeolocation();
     if (!ipOk) activateClickToSet();
   }
-  if (btn) btn.textContent = gpsSource !== 'none' ? '⊕ GPS ✓' : '⊕ GPS ✗';
+
+  if (btn) {
+    btn.textContent = (gpsSource === 'browser' || gpsSource === 'hardware')
+      ? '⊕ GPS ✓' : '⊕ GPS ✗';
+  }
 }
 
 // ── Observer marker ───────────────────────────────────────────────────────
@@ -443,12 +520,12 @@ function handleUpdate(msg) {
   if (selectedMac && devices[selectedMac]) updateDetailPanel(devices[selectedMac]);
 }
 
-/** Hardware GPS observer from server — takes priority over IP/manual */
+/** Hardware GPS from server — overrides IP/manual but not browser GPS. */
 function handleHardwareObserver(obs) {
   if (!obs?.lat || !obs?.lon) return;
-  if (gpsSource === 'hardware' || gpsSource === 'none') {
-    onGPSFix(obs.lat, obs.lon, obs.alt || 0, 'hardware', null);
-  }
+  // browser GPS (phone) and hardware GPS share the same priority level (4),
+  // so onGPSFix's priority guard handles the tie correctly — first-writer wins.
+  onGPSFix(obs.lat, obs.lon, obs.alt || 0, 'hardware', null);
 }
 
 // ── Table rendering ───────────────────────────────────────────────────────

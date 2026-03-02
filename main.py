@@ -4,23 +4,30 @@ Drone Detection System — Main Entry Point
 =========================================
 Usage:
     sudo python main.py web           # Launch web dashboard (default)
+    sudo python main.py web --ssl     # HTTPS (required for phone GPS over LAN)
     sudo python main.py terminal      # Rich live terminal display
     sudo python main.py dashboard     # Full-screen curses dashboard
     sudo python main.py scan          # Simple scrolling scan output
+    sudo python main.py diag          # Diagnostic capture mode
     sudo python main.py --help
 
 All modes share the same detection pipeline.  The web mode also exposes
 a REST API and WebSocket stream usable by external clients.
+
+HTTPS NOTE: Phone/tablet browsers block GPS on plain http:// over LAN.
+Run with --ssl to enable HTTPS with an auto-generated self-signed cert.
+Then open https://<ip>:8443 on your phone and accept the cert warning.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import signal
+import socket
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import click
 import uvicorn
@@ -42,6 +49,103 @@ from cli.display import CLIDisplay
 # CursesDashboard imported lazily inside the dashboard command (curses unavailable on Windows)
 
 logger = logging.getLogger("drone_detect")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SSL Certificate (self-signed, for HTTPS over LAN)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_local_ips() -> list:
+    """Return all local IPv4 addresses for the SAN extension."""
+    ips = {"127.0.0.1"}
+    try:
+        hostname = socket.gethostname()
+        ips.add(socket.gethostbyname(hostname))
+    except Exception:
+        pass
+    try:
+        import subprocess
+        out = subprocess.check_output(["hostname", "-I"], text=True, timeout=3)
+        for ip in out.strip().split():
+            if "." in ip:
+                ips.add(ip)
+    except Exception:
+        pass
+    return list(ips)
+
+
+def generate_ssl_cert(cert_dir: Path = Path("C:/drone-detect/ssl")) -> Tuple[str, str]:
+    """
+    Generate (or reuse) a self-signed TLS certificate for HTTPS.
+    Returns (cert_path, key_path).
+    Required so phone browsers allow GPS over LAN (https://<ip>:8443).
+    """
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    cert_file = cert_dir / "cert.pem"
+    key_file  = cert_dir / "key.pem"
+
+    if cert_file.exists() and key_file.exists():
+        logger.info("Reusing existing SSL cert: %s", cert_file)
+        return str(cert_file), str(key_file)
+
+    try:
+        import datetime
+        import ipaddress
+        from cryptography import x509
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+
+        key = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048, backend=default_backend()
+        )
+        subject = issuer = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME,        "drone-detect"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME,  "DroneDetect"),
+        ])
+
+        # SAN: include all local IPs so the cert is valid on the LAN
+        san_entries = [x509.DNSName("localhost"), x509.DNSName("drone-detect.local")]
+        for ip in _get_local_ips():
+            try:
+                san_entries.append(x509.IPAddress(ipaddress.IPv4Address(ip)))
+            except Exception:
+                pass
+
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.utcnow())
+            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
+            .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+            .sign(key, hashes.SHA256(), default_backend())
+        )
+
+        with open(cert_file, "wb") as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+        with open(key_file, "wb") as f:
+            f.write(key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            ))
+
+        logger.info("Generated self-signed SSL cert: %s", cert_file)
+        logger.info("Local IPs in cert SAN: %s", _get_local_ips())
+        return str(cert_file), str(key_file)
+
+    except ImportError:
+        logger.error("cryptography package not installed — run: pip install cryptography")
+        raise
+    except Exception as exc:
+        logger.error("SSL cert generation failed: %s", exc)
+        raise
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Core Detection System
@@ -328,22 +432,39 @@ def cli(ctx, config, interface):
 @click.option("--port", "-p", default=None, type=int, help="Override web port")
 @click.option("--demo", is_flag=True, default=False,
               help="Start web UI only (no capture) — useful without a wireless adapter")
+@click.option("--ssl", "use_ssl", is_flag=True, default=False,
+              help="Enable HTTPS with auto-generated self-signed cert "
+                   "(required for phone GPS over LAN). "
+                   "Opens on port 8443 unless --port is set.")
 @click.pass_context
-def web(ctx, host, port, demo):
-    """Launch the web dashboard + REST API + WebSocket stream."""
+def web(ctx, host, port, demo, use_ssl):
+    """Launch the web dashboard + REST API + WebSocket stream.
+
+    \b
+    GPS NOTE:
+      Plain HTTP blocks GPS on mobile browsers over LAN.
+      Use --ssl to enable HTTPS, then open https://<ip>:8443 on your phone
+      and accept the self-signed cert warning — GPS will then work.
+    """
     cfg = ctx.obj["config"]
     if host:
         cfg["web"]["host"] = host
     if port:
         cfg["web"]["port"] = port
+    elif use_ssl and not port:
+        cfg["web"]["ssl_port"] = cfg["web"].get("ssl_port", 8443)
     if demo:
         cfg["_demo_mode"] = True
+    if use_ssl:
+        cfg["_use_ssl"] = True
 
     asyncio.run(_run_web(cfg))
 
 
 async def _run_web(config: dict):
     demo_mode = config.get("_demo_mode", False)
+    use_ssl   = config.get("_use_ssl", False)
+
     system = DroneDetectionSystem(config)
     app    = create_app(
         device_table=system.device_table,
@@ -352,14 +473,29 @@ async def _run_web(config: dict):
         config=config,
     )
 
-    web_cfg = config["web"]
-    uv_config = uvicorn.Config(
-        app,
+    web_cfg  = config["web"]
+    ssl_port = web_cfg.get("ssl_port", 8443)
+
+    if use_ssl:
+        cert_file, key_file = generate_ssl_cert()
+        port = ssl_port
+        scheme = "https"
+    else:
+        cert_file = key_file = None
+        port = web_cfg["port"]
+        scheme = "http"
+
+    uv_kwargs: dict = dict(
         host=web_cfg["host"],
-        port=web_cfg["port"],
+        port=port,
         log_level="warning",
         access_log=False,
     )
+    if use_ssl:
+        uv_kwargs["ssl_certfile"] = cert_file
+        uv_kwargs["ssl_keyfile"]  = key_file
+
+    uv_config = uvicorn.Config(app, **uv_kwargs)
     server = uvicorn.Server(uv_config)
 
     loop = asyncio.get_event_loop()
@@ -373,7 +509,17 @@ async def _run_web(config: dict):
     signal.signal(signal.SIGTERM, _shutdown)
 
     await system.start()
-    logger.info("Web UI: http://%s:%d", web_cfg["host"], web_cfg["port"])
+
+    local_ips = _get_local_ips()
+    logger.info("Web UI: %s://localhost:%d", scheme, port)
+    for ip in local_ips:
+        if ip != "127.0.0.1":
+            logger.info("       %s://%s:%d  ← open this on your phone", scheme, ip, port)
+    if use_ssl:
+        logger.info("NOTE: Accept the browser's self-signed cert warning — GPS will work after that")
+    else:
+        logger.info("TIP: Run with --ssl to enable HTTPS and phone GPS over LAN")
+
     await server.serve()
     await system.stop()
 
