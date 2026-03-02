@@ -1,21 +1,27 @@
 /* ============================================================
    DRONE DETECT — Frontend Application
-   WebSocket client, device table, map rendering, sparklines.
+   WebSocket client, device table, map rendering, sparklines,
+   browser GPS integration.
    ============================================================ */
 
 'use strict';
 
 // ── State ─────────────────────────────────────────────────────────────────
-let devices     = {};          // mac → device object
-let ws          = null;
-let wsRetries   = 0;
+let devices        = {};          // mac → device object
+let ws             = null;
+let wsRetries      = 0;
 let showDronesOnly = false;
-let selectedMac = null;
-let map         = null;
-let mapMarkers  = {};          // mac → Leaflet marker
+let selectedMac    = null;
+let map            = null;
+let mapMarkers     = {};          // mac → Leaflet marker
+let droneCircles   = {};          // mac → Leaflet circle (RSSI range estimate)
 let observerMarker = null;
-let startTime   = Date.now();
-let uiConfig    = {};
+let observerAccuracyCircle = null;
+let startTime      = Date.now();
+let uiConfig       = {};
+let gpsWatchId     = null;
+let observerPos    = null;        // {lat, lon} current observer
+let lastStats      = {};
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
@@ -24,6 +30,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   connectWS();
   setInterval(updateUptime, 1000);
   setInterval(pruneStaleRows, 10_000);
+  // Try browser GPS automatically on load
+  tryAutoGPS();
 });
 
 // ── Config ────────────────────────────────────────────────────────────────
@@ -67,15 +75,10 @@ function connectWS() {
     try { msg = JSON.parse(evt.data); } catch { return; }
 
     switch (msg.type) {
-      case 'init':
-        handleInit(msg);
-        break;
-      case 'update':
-        handleUpdate(msg);
-        break;
+      case 'init':   handleInit(msg);   break;
+      case 'update': handleUpdate(msg); break;
       case 'pong':
-      case 'keepalive':
-        break;
+      case 'keepalive': break;
     }
   };
 
@@ -101,14 +104,14 @@ function handleInit(msg) {
   if (msg.devices) {
     msg.devices.forEach(d => { devices[d.mac] = d; });
   }
-  if (msg.observer) updateObserver(msg.observer);
+  // If server has hardware GPS observer, use it; else keep browser GPS
+  if (msg.observer) updateObserver(msg.observer, 'hardware');
   renderTable();
   updateStats();
 }
 
 function handleUpdate(msg) {
   if (msg.devices) {
-    const prev = Object.keys(devices);
     const newMacs = new Set();
 
     msg.devices.forEach(d => {
@@ -122,10 +125,11 @@ function handleUpdate(msg) {
     });
 
     // Mark removed devices
-    prev.forEach(mac => { if (!newMacs.has(mac)) delete devices[mac]; });
+    Object.keys(devices).forEach(mac => { if (!newMacs.has(mac)) delete devices[mac]; });
   }
 
-  if (msg.observer) updateObserver(msg.observer);
+  if (msg.observer) updateObserver(msg.observer, 'hardware');
+  if (msg.stats)    lastStats = msg.stats;
 
   renderTable();
   updateStats(msg.stats);
@@ -195,19 +199,20 @@ function selectDevice(mac) {
   panel.classList.remove('hidden');
   updateDetailPanel(d);
 
-  // Pan map to marker
+  // Pan map to drone circle or observer
   const m = mapMarkers[mac];
   if (m) map.panTo(m.getLatLng());
+  else if (observerPos) map.panTo([observerPos.lat, observerPos.lon]);
 }
 
 function updateDetailPanel(d) {
-  document.getElementById('detailMac').textContent   = d.mac;
-  document.getElementById('detailBrand').textContent = d.brand || d.vendor || '—';
-  document.getElementById('detailSsid').textContent  = d.ssid  || '—';
+  document.getElementById('detailMac').textContent     = d.mac;
+  document.getElementById('detailBrand').textContent   = d.brand || d.vendor || '—';
+  document.getElementById('detailSsid').textContent    = d.ssid  || '—';
   document.getElementById('detailChannel').textContent = d.channel || '—';
-  document.getElementById('detailConf').textContent  = `${d.confidence_label} (${Math.round(d.confidence)}%)`;
-  document.getElementById('detailFirst').textContent = new Date(d.first_seen * 1000).toLocaleTimeString();
-  document.getElementById('detailPkts').textContent  = fmtNum(d.packet_count);
+  document.getElementById('detailConf').textContent    = `${d.confidence_label} (${Math.round(d.confidence)}%)`;
+  document.getElementById('detailFirst').textContent   = new Date(d.first_seen * 1000).toLocaleTimeString();
+  document.getElementById('detailPkts').textContent    = fmtNum(d.packet_count);
 
   drawSparkline(d.rssi_history || []);
 }
@@ -292,6 +297,9 @@ function initMap() {
     subdomains: 'abcd',
     maxZoom: 19,
   }).addTo(map);
+
+  // Map scale control
+  L.control.scale({ imperial: false, metric: true, position: 'bottomright' }).addTo(map);
 }
 
 function droneMarkerStyle(label) {
@@ -299,63 +307,136 @@ function droneMarkerStyle(label) {
   return colors[label] || '#555';
 }
 
+/** Estimate drone range in metres from RSSI using free-space path loss approximation */
+function rssiToRangeMetres(rssi) {
+  // Rough model: -45 → ~10m, -60 → ~50m, -70 → ~150m, -80 → ~400m, -90 → ~800m
+  if (rssi >= -45) return 10;
+  if (rssi >= -60) return 50;
+  if (rssi >= -70) return 150;
+  if (rssi >= -80) return 400;
+  if (rssi >= -90) return 800;
+  return 1500;
+}
+
 function updateMapMarkers() {
   Object.values(devices).forEach(d => {
-    // Only place markers for devices with a valid GPS-derived location.
-    // Without DF hardware we don't have coords — show all at observer if GPS active.
-    // For now, markers are only placed if the device has lat/lon injected (future DF).
-    if (!d.lat || !d.lon) return;
-
     const color = droneMarkerStyle(d.confidence_label);
-    const icon  = L.divIcon({
-      html: `<div style="width:14px;height:14px;border-radius:50%;
-                         background:${color};border:2px solid #fff;
-                         box-shadow:0 0 8px ${color};"></div>`,
-      className: '',
-      iconSize: [14, 14],
-      iconAnchor: [7, 7],
-    });
 
-    const popup = `
-      <b>${d.mac}</b><br/>
-      ${d.brand || d.vendor || '—'}<br/>
-      SSID: ${d.ssid || '—'}<br/>
-      CH: ${d.channel}  RSSI: ${d.rssi} dBm<br/>
-      <span style="color:${color}">${d.confidence_label} — ${Math.round(d.confidence)}%</span>
-    `;
+    // ── If device has a real GPS-derived location, place precise marker ──
+    if (d.lat && d.lon) {
+      const icon = L.divIcon({
+        html: `<div style="width:14px;height:14px;border-radius:50%;
+                           background:${color};border:2px solid #fff;
+                           box-shadow:0 0 8px ${color};"></div>`,
+        className: '',
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+      });
 
-    if (mapMarkers[d.mac]) {
-      mapMarkers[d.mac].setLatLng([d.lat, d.lon]);
-      mapMarkers[d.mac].setPopupContent(popup);
+      const popup = buildDronePopup(d, color);
+
+      if (mapMarkers[d.mac]) {
+        mapMarkers[d.mac].setLatLng([d.lat, d.lon]);
+        mapMarkers[d.mac].setPopupContent(popup);
+      } else {
+        mapMarkers[d.mac] = L.marker([d.lat, d.lon], { icon })
+          .addTo(map)
+          .bindPopup(popup);
+      }
+      return;
+    }
+
+    // ── No GPS on drone — draw RSSI-range circle around observer ──
+    if (!observerPos) return;  // need at least observer position
+
+    const rangeM = rssiToRangeMetres(d.rssi || -90);
+    const popup  = buildDronePopup(d, color);
+
+    if (droneCircles[d.mac]) {
+      droneCircles[d.mac].setRadius(rangeM);
+      droneCircles[d.mac].setStyle({ color });
+      droneCircles[d.mac].setPopupContent(popup);
     } else {
-      mapMarkers[d.mac] = L.marker([d.lat, d.lon], { icon })
-        .addTo(map)
-        .bindPopup(popup);
+      droneCircles[d.mac] = L.circle([observerPos.lat, observerPos.lon], {
+        radius: rangeM,
+        color,
+        fillColor: color,
+        fillOpacity: 0.06,
+        weight: 1.5,
+        dashArray: d.confidence_label === 'HIGH' ? null : '6 4',
+      }).addTo(map).bindPopup(popup);
+
+      // Pulse icon at observer location for confirmed drones
+      if (d.is_drone || d.confidence >= 60) {
+        const icon = L.divIcon({
+          html: `<div class="drone-pulse" style="--dc:${color}">
+                   <div class="drone-dot" style="background:${color}"></div>
+                 </div>`,
+          className: '',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+        });
+        mapMarkers[d.mac] = L.marker([observerPos.lat, observerPos.lon], { icon })
+          .addTo(map)
+          .bindPopup(popup);
+      }
     }
   });
 
-  // Remove markers for gone devices
+  // Remove markers / circles for gone devices
   Object.keys(mapMarkers).forEach(mac => {
     if (!devices[mac]) {
       map.removeLayer(mapMarkers[mac]);
       delete mapMarkers[mac];
     }
   });
+  Object.keys(droneCircles).forEach(mac => {
+    if (!devices[mac]) {
+      map.removeLayer(droneCircles[mac]);
+      delete droneCircles[mac];
+    }
+  });
 }
 
-function updateObserver(obs) {
+function buildDronePopup(d, color) {
+  const rangeM  = rssiToRangeMetres(d.rssi || -90);
+  const ranging = observerPos
+    ? `<br/><small style="color:#888">Est. range: ~${rangeM}m (RSSI-based)</small>`
+    : '';
+  return `
+    <b style="color:${color}">${d.mac}</b><br/>
+    ${d.brand || d.vendor || '—'}<br/>
+    SSID: ${d.ssid || '—'}<br/>
+    CH: ${d.channel || '?'} &nbsp; RSSI: ${d.rssi} dBm<br/>
+    <span style="color:${color}">${d.confidence_label} — ${Math.round(d.confidence)}%</span>
+    ${ranging}
+  `;
+}
+
+// ── Observer / GPS ─────────────────────────────────────────────────────────
+/**
+ * Update the observer position on the map.
+ * source: 'hardware' | 'browser'
+ * accuracy: metres (browser only)
+ */
+function updateObserver(obs, source = 'hardware', accuracy = null) {
   if (!obs || !obs.lat || !obs.lon) return;
 
-  document.getElementById('gpsStatus').textContent = `GPS: ${obs.lat.toFixed(5)}, ${obs.lon.toFixed(5)}`;
+  observerPos = { lat: obs.lat, lon: obs.lon };
+
+  const label   = source === 'browser' ? 'BROWSER GPS' : 'GPS';
+  const accText = accuracy ? ` ±${Math.round(accuracy)}m` : '';
+  document.getElementById('gpsStatus').textContent =
+    `${label}: ${obs.lat.toFixed(5)}, ${obs.lon.toFixed(5)}${accText}`;
   document.getElementById('gpsStatus').classList.add('active');
 
   const icon = L.divIcon({
-    html: `<div style="width:12px;height:12px;border-radius:50%;
+    html: `<div style="width:14px;height:14px;border-radius:50%;
                        background:#39FF14;border:2px solid #fff;
                        box-shadow:0 0 10px #39FF14;"></div>`,
     className: '',
-    iconSize: [12, 12],
-    iconAnchor: [6, 6],
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
   });
 
   if (observerMarker) {
@@ -363,9 +444,100 @@ function updateObserver(obs) {
   } else {
     observerMarker = L.marker([obs.lat, obs.lon], { icon })
       .addTo(map)
-      .bindPopup('<b>OBSERVER</b><br/>Your GPS position');
-    map.setView([obs.lat, obs.lon], 15);
+      .bindPopup(`<b>OBSERVER</b><br/>${label}<br/>${obs.lat.toFixed(5)}, ${obs.lon.toFixed(5)}${accText}`);
+    // First fix — center the map here
+    map.setView([obs.lat, obs.lon], 16);
   }
+
+  // Accuracy circle (browser GPS only)
+  if (accuracy) {
+    if (observerAccuracyCircle) {
+      observerAccuracyCircle.setLatLng([obs.lat, obs.lon]);
+      observerAccuracyCircle.setRadius(accuracy);
+    } else {
+      observerAccuracyCircle = L.circle([obs.lat, obs.lon], {
+        radius: accuracy,
+        color: '#39FF14',
+        fillColor: '#39FF14',
+        fillOpacity: 0.05,
+        weight: 1,
+        dashArray: '4 4',
+      }).addTo(map);
+    }
+  }
+
+  // Update drone circles to new observer location
+  updateDroneCirclePositions();
+}
+
+function updateDroneCirclePositions() {
+  if (!observerPos) return;
+  Object.keys(droneCircles).forEach(mac => {
+    droneCircles[mac].setLatLng([observerPos.lat, observerPos.lon]);
+  });
+  Object.keys(mapMarkers).forEach(mac => {
+    const d = devices[mac];
+    if (d && !d.lat && !d.lon) {
+      // This marker is an RSSI-proximity marker at observer pos
+      mapMarkers[mac].setLatLng([observerPos.lat, observerPos.lon]);
+    }
+  });
+}
+
+// ── Browser GPS ───────────────────────────────────────────────────────────
+
+/** Called automatically on page load — tries to get GPS without a prompt click */
+function tryAutoGPS() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    pos => onBrowserGPS(pos),
+    () => {},  // silent fail — user can click GPS button manually
+    { timeout: 5000, maximumAge: 30_000 }
+  );
+}
+
+/** Called when user clicks the ⊕ GPS button */
+function requestBrowserGPS() {
+  if (!navigator.geolocation) {
+    triggerAlert('Geolocation not supported in this browser');
+    return;
+  }
+
+  const btn = document.getElementById('gpsBtn');
+  if (btn) btn.textContent = '⊕ GPS…';
+
+  if (gpsWatchId !== null) {
+    navigator.geolocation.clearWatch(gpsWatchId);
+    gpsWatchId = null;
+  }
+
+  gpsWatchId = navigator.geolocation.watchPosition(
+    pos => {
+      onBrowserGPS(pos);
+      if (btn) btn.textContent = '⊕ GPS ✓';
+    },
+    err => {
+      console.warn('GPS error:', err.message);
+      triggerAlert(`GPS error: ${err.message}`);
+      if (btn) btn.textContent = '⊕ GPS ✗';
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
+}
+
+function onBrowserGPS(pos) {
+  const { latitude: lat, longitude: lon, altitude, accuracy } = pos.coords;
+  const alt = altitude || 0;
+
+  // Push to server so it can track observer position
+  fetch('/api/gps/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat, lon, alt, accuracy, source: 'browser' }),
+  }).catch(e => console.warn('GPS push failed:', e));
+
+  // Update map immediately (no waiting for WS roundtrip)
+  updateObserver({ lat, lon, alt }, 'browser', accuracy);
 }
 
 // ── Stats bar ─────────────────────────────────────────────────────────────
@@ -375,6 +547,13 @@ function updateStats(stats) {
 
   document.getElementById('statTotal').textContent  = total;
   document.getElementById('statDrones').textContent = drones;
+
+  if (stats) {
+    const ppsEl = document.getElementById('statPps');
+    const chEl  = document.getElementById('statChannel');
+    if (ppsEl) ppsEl.textContent = stats.pps != null ? stats.pps.toFixed(1) : '0';
+    if (chEl)  chEl.textContent  = stats.current_channel || '—';
+  }
 }
 
 function updateUptime() {
@@ -438,9 +617,9 @@ function pruneStaleRows() {
 function timeAgo(ts) {
   if (!ts) return '—';
   const s = Math.floor(Date.now() / 1000 - ts);
-  if (s < 60)  return `${s}s`;
-  if (s < 3600) return `${Math.floor(s/60)}m`;
-  return `${Math.floor(s/3600)}h`;
+  if (s < 60)   return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h`;
 }
 
 function truncate(str, n) {

@@ -244,7 +244,8 @@ def _capture_worker(
             prn=_handle,
             store=False,
             stop_filter=lambda _: stop_evt.is_set(),
-            monitor=True,
+            # monitor=True removed — interface is already in monitor mode via airmon-ng/iw
+            # Leaving monitor=True causes OSError on many drivers and kills the capture loop
         )
     except PermissionError:
         print(f"[CAPTURE] Permission denied on '{interface}'. Run as root.")
@@ -329,7 +330,7 @@ class PacketCapture:
     @staticmethod
     def _deserialize(raw: bytes):
         try:
-            from scapy.layers.radiohead import RadioTap  # type: ignore
+            from scapy.layers.dot11 import RadioTap  # type: ignore
             return RadioTap(raw)
         except Exception:
             return None

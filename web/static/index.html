@@ -30,6 +30,8 @@
     </div>
     <div class="stat-pill">DEVICES: <strong id="statTotal">0</strong></div>
     <div class="stat-pill">DRONES:  <strong id="statDrones" class="danger">0</strong></div>
+    <div class="stat-pill">PKTS/S:  <strong id="statPps">0</strong></div>
+    <div class="stat-pill">CH: <strong id="statChannel">—</strong></div>
     <div class="stat-pill">UPTIME:  <strong id="statUptime">00:00:00</strong></div>
   </div>
 </header>
@@ -89,6 +91,10 @@
   <section class="panel" id="mapPanel">
     <div class="panel-header">
       <span>◆ LIVE MAP</span>
+      <div class="panel-controls">
+        <button class="btn btn-sm" onclick="requestBrowserGPS()" id="gpsBtn" title="Use browser GPS to center map">⊕ GPS</button>
+        <button class="btn btn-sm" onclick="map && map.setZoom(15)" title="Reset zoom">⊕ ZOOM</button>
+      </div>
       <div id="gpsStatus" class="gps-status">GPS: INACTIVE</div>
     </div>
     <div id="map"></div>
