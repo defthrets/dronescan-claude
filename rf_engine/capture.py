@@ -13,11 +13,117 @@ import asyncio
 import logging
 import multiprocessing
 import signal
+import subprocess
 import time
 from pathlib import Path
 from typing import Callable, List, Optional
 
 logger = logging.getLogger("drone_detect.capture")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Interface discovery
+# ─────────────────────────────────────────────────────────────────────────────
+
+def find_monitor_interfaces() -> List[str]:
+    """
+    Scan `iw dev` output and return all interfaces currently in monitor mode.
+    Works regardless of naming convention (wlan0mon, wlan1mon, mon0, etc.).
+    """
+    try:
+        result = subprocess.run(
+            ["iw", "dev"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
+        )
+        ifaces: List[str] = []
+        current_iface: Optional[str] = None
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("Interface "):
+                current_iface = line.split()[1]
+            elif line.startswith("type monitor") and current_iface:
+                ifaces.append(current_iface)
+                current_iface = None
+        return ifaces
+    except Exception as exc:
+        logger.debug("find_monitor_interfaces error: %s", exc)
+        return []
+
+
+def interface_exists(name: str) -> bool:
+    """Return True if a network interface with this name exists in the kernel."""
+    return Path(f"/sys/class/net/{name}").exists()
+
+
+def resolve_interface(configured: str) -> str:
+    """
+    Resolve the actual monitor-mode interface to use.
+
+    Priority:
+      1. Configured interface exists and is in monitor mode → use it.
+      2. Configured interface exists but wrong mode → warn, try anyway.
+      3. Configured interface missing → scan for any monitor-mode interface.
+         - Exactly one found → use it automatically.
+         - Multiple found  → pick the first, log the others.
+         - None found      → raise RuntimeError with helpful message.
+    """
+    if interface_exists(configured):
+        monitors = find_monitor_interfaces()
+        if configured in monitors:
+            logger.info("Interface '%s' confirmed in monitor mode", configured)
+            return configured
+        else:
+            logger.warning(
+                "Interface '%s' exists but is NOT in monitor mode — "
+                "capture may fail. Run: sudo airmon-ng start %s",
+                configured, configured.replace("mon", ""),
+            )
+            return configured
+
+    # Configured interface not found — search for any monitor interface
+    logger.warning(
+        "Interface '%s' not found — scanning for monitor-mode interfaces...",
+        configured,
+    )
+    monitors = find_monitor_interfaces()
+
+    if not monitors:
+        # Last-ditch: list all wireless interfaces to help the user
+        try:
+            r = subprocess.run(["iw", "dev"], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, timeout=5)
+            all_ifaces = [
+                line.strip().split()[1]
+                for line in r.stdout.splitlines()
+                if line.strip().startswith("Interface ")
+            ]
+        except Exception:
+            all_ifaces = []
+
+        msg = (
+            f"No monitor-mode interfaces found. "
+            f"Configured: '{configured}'. "
+        )
+        if all_ifaces:
+            msg += f"Wireless interfaces present: {all_ifaces}. "
+            msg += "Put one in monitor mode: sudo airmon-ng start <iface>"
+        else:
+            msg += "No wireless interfaces detected — plug in USB adapter."
+        raise RuntimeError(msg)
+
+    if len(monitors) > 1:
+        logger.warning(
+            "Multiple monitor interfaces found: %s — using '%s'. "
+            "Override with --interface flag or update config.yaml.",
+            monitors, monitors[0],
+        )
+    else:
+        logger.info(
+            "Auto-detected monitor interface: '%s' (configured was '%s')",
+            monitors[0], configured,
+        )
+
+    return monitors[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

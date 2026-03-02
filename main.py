@@ -27,7 +27,7 @@ import uvicorn
 
 from utils.config_loader import load_config
 from utils.logging_config import setup_logging
-from rf_engine.capture import PacketCapture, ChannelHopper
+from rf_engine.capture import PacketCapture, ChannelHopper, resolve_interface
 from rf_engine.frame_parser import parse_frame
 from rf_engine.device_table import DeviceTable, DroneDevice
 from detection.oui_lookup import OUILookup
@@ -222,6 +222,26 @@ class DroneDetectionSystem:
 
     async def start(self):
         self._running = True
+
+        # ── Resolve the actual monitor-mode interface ──────────────────────────
+        # Handles the common case where airmon-ng renamed wlan1 → wlan1mon
+        # but config still says wlan0mon (or any other mismatch).
+        try:
+            resolved = resolve_interface(self.config["interface"])
+        except RuntimeError as exc:
+            logger.error("Interface error: %s", exc)
+            raise SystemExit(1)
+
+        if resolved != self.config["interface"]:
+            logger.warning(
+                "Interface override: '%s' → '%s'  "
+                "(update config.yaml to silence this warning)",
+                self.config["interface"], resolved,
+            )
+            self.config["interface"] = resolved
+            self.capture.interface   = resolved
+            self.hopper.interface    = resolved
+
         logger.info("Starting drone detection on interface '%s'", self.config["interface"])
 
         await self.capture.start(self._process_packet)
