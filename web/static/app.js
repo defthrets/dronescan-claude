@@ -172,10 +172,10 @@ function activateClickToSet() {
 /**
  * Called when a GPS fix arrives from any source.
  * Source priority (higher number wins):
- *   hardware / browser = 4  >  manual = 2  >  ip = 1  >  none = 0
- * This prevents an IP-geoloc result from overwriting a real GPS fix.
+ *   hardware / browser = 4  >  wigle = 3  >  manual = 2  >  ip = 1  >  none = 0
+ * This prevents a lower-quality source from overwriting a real GPS fix.
  */
-const GPS_PRIORITY = { hardware: 4, browser: 4, manual: 2, ip: 1, none: 0 };
+const GPS_PRIORITY = { hardware: 4, browser: 4, wigle: 3, manual: 2, ip: 1, none: 0 };
 
 function onGPSFix(lat, lon, alt = 0, source = 'browser', accuracy = null) {
   // Don't downgrade from a higher-priority source
@@ -198,6 +198,10 @@ function onGPSFix(lat, lon, alt = 0, source = 'browser', accuracy = null) {
     case 'hardware':
     case 'browser':
       statusText   = `GPS ✓  ${lat.toFixed(5)}, ${lon.toFixed(5)}${accTxt}`;
+      statusActive = true;
+      break;
+    case 'wigle':
+      statusText   = `WIFI-LOC ✓  ${lat.toFixed(4)}, ${lon.toFixed(4)}${accTxt}  (WiGLE)`;
       statusActive = true;
       break;
     case 'ip':
@@ -302,8 +306,13 @@ function placeObserverMarker(lat, lon, accuracy) {
 }
 
 function observerPopupHtml(lat, lon) {
-  const src = { hardware: 'Hardware GPS', browser: 'Browser GPS',
-                ip: 'IP Geolocation', manual: 'Manual (map click)' }[gpsSource] || gpsSource;
+  const src = {
+    hardware: 'Hardware GPS',
+    browser:  'Browser GPS',
+    wigle:    'WiGLE Wi-Fi positioning',
+    ip:       'IP Geolocation (city-level)',
+    manual:   'Manual (map click)',
+  }[gpsSource] || gpsSource;
   return `<b style="color:#39FF14">◉ OBSERVER</b><br/>
           <small>${lat.toFixed(6)}, ${lon.toFixed(6)}</small><br/>
           <small style="color:#666">Source: ${src}</small>`;
@@ -481,8 +490,9 @@ function connectWS() {
     let msg;
     try { msg = JSON.parse(evt.data); } catch { return; }
     switch (msg.type) {
-      case 'init':      handleInit(msg);   break;
-      case 'update':    handleUpdate(msg); break;
+      case 'init':            handleInit(msg);           break;
+      case 'update':          handleUpdate(msg);         break;
+      case 'observer_update': handleServerObserver(msg.observer); break;
     }
   };
 
@@ -495,7 +505,7 @@ function connectWS() {
 function handleInit(msg) {
   devices = {};
   (msg.devices || []).forEach(d => { devices[d.mac] = d; });
-  if (msg.observer) handleHardwareObserver(msg.observer);
+  if (msg.observer) handleServerObserver(msg.observer);
   renderTable();
   updateStats();
   updateMapMarkers();
@@ -512,7 +522,7 @@ function handleUpdate(msg) {
   });
   Object.keys(devices).forEach(m => { if (!newMacs.has(m)) delete devices[m]; });
 
-  if (msg.observer) handleHardwareObserver(msg.observer);
+  if (msg.observer) handleServerObserver(msg.observer);
   renderTable();
   updateStats(msg.stats);
   updateMapMarkers();
@@ -520,12 +530,16 @@ function handleUpdate(msg) {
   if (selectedMac && devices[selectedMac]) updateDetailPanel(devices[selectedMac]);
 }
 
-/** Hardware GPS from server — overrides IP/manual but not browser GPS. */
-function handleHardwareObserver(obs) {
+/**
+ * Observer position update pushed from the server.
+ * Source is carried in obs.source: 'hardware' | 'wigle' | 'browser' | etc.
+ * The GPS_PRIORITY guard in onGPSFix ensures a WiGLE fix never overwrites
+ * a real browser/hardware GPS fix that the client already has.
+ */
+function handleServerObserver(obs) {
   if (!obs?.lat || !obs?.lon) return;
-  // browser GPS (phone) and hardware GPS share the same priority level (4),
-  // so onGPSFix's priority guard handles the tie correctly — first-writer wins.
-  onGPSFix(obs.lat, obs.lon, obs.alt || 0, 'hardware', null);
+  const src = obs.source || 'hardware';
+  onGPSFix(obs.lat, obs.lon, obs.alt || 0, src, obs.accuracy || null);
 }
 
 // ── Table rendering ───────────────────────────────────────────────────────

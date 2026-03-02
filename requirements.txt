@@ -23,5 +23,8 @@ rich>=13.7.0
 # ── SSL / TLS (self-signed cert for HTTPS LAN access) ──────────────────────
 cryptography>=42.0.0
 
+# ── WiGLE Wi-Fi positioning (async HTTP client) ─────────────────────────────
+httpx>=0.27.0
+
 # ── Misc ───────────────────────────────────────────────────────────────────
 python-dateutil>=2.9.0
