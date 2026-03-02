@@ -17,6 +17,16 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("drone_detect.tracker")
 
+# Same priority table as the JS frontend (higher = better source)
+_SOURCE_PRIORITY: dict = {
+    "hardware": 4,
+    "browser":  4,
+    "wigle":    3,
+    "manual":   2,
+    "ip":       1,
+    "none":     0,
+}
+
 
 @dataclass
 class Location:
@@ -67,17 +77,38 @@ class LocationTracker:
     """
 
     def __init__(self, history_len: int = 30):
-        self._observer: Optional[Location] = None
-        self._observer_history: Deque[Location] = deque(maxlen=history_len)
+        self._observer:        Optional[Location]                    = None
+        self._observer_source: str                                    = "none"
+        self._observer_history: Deque[Location]                      = deque(maxlen=history_len)
         # mac → deque of (timestamp, rssi)
-        self._rssi_history: Dict[str, Deque[Tuple[float, int]]] = {}
-        self._estimates: Dict[str, DroneEstimate] = {}
+        self._rssi_history: Dict[str, Deque[Tuple[float, int]]]      = {}
+        self._estimates:    Dict[str, DroneEstimate]                  = {}
 
     # ── writes ───────────────────────────────────────────────────────────────
 
-    def update_observer(self, lat: float, lon: float, alt: float = 0.0):
+    def update_observer(
+        self,
+        lat:    float,
+        lon:    float,
+        alt:    float = 0.0,
+        source: str   = "hardware",
+    ):
+        """
+        Update observer position.  Higher-priority sources overwrite lower ones;
+        e.g. a real GPS fix will not be replaced by a WiGLE estimate.
+        Priority: hardware = browser (4) > wigle (3) > manual (2) > ip (1)
+        """
+        current_pri = _SOURCE_PRIORITY.get(self._observer_source, 0)
+        new_pri     = _SOURCE_PRIORITY.get(source, 0)
+        if current_pri > new_pri:
+            logger.debug(
+                "Observer update from '%s' ignored (current source '%s' has higher priority)",
+                source, self._observer_source,
+            )
+            return
         loc = Location(lat=lat, lon=lon, alt=alt, timestamp=time.time())
-        self._observer = loc
+        self._observer        = loc
+        self._observer_source = source
         self._observer_history.append(loc)
 
     def update_drone_rssi(self, mac: str, rssi: int):
@@ -102,6 +133,7 @@ class LocationTracker:
             "lon":       self._observer.lon,
             "alt":       self._observer.alt,
             "timestamp": self._observer.timestamp,
+            "source":    self._observer_source,
         }
 
     # ── internals ────────────────────────────────────────────────────────────

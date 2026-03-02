@@ -100,13 +100,14 @@ def create_app(
         Falls back to browser GPS when no hardware GPS dongle is connected.
         """
         try:
-            lat = float(body.get("lat", 0))
-            lon = float(body.get("lon", 0))
-            alt = float(body.get("alt", 0))
+            lat    = float(body.get("lat", 0))
+            lon    = float(body.get("lon", 0))
+            alt    = float(body.get("alt", 0))
+            source = str(body.get("source", "browser"))
             if lat and lon:
-                location_tracker.update_observer(lat, lon, alt)
-                logger.debug("Browser GPS fix: %.6f, %.6f", lat, lon)
-                return {"ok": True, "source": "browser"}
+                location_tracker.update_observer(lat, lon, alt, source)
+                logger.debug("GPS fix from '%s': %.6f, %.6f", source, lat, lon)
+                return {"ok": True, "source": source}
         except Exception as exc:
             logger.debug("GPS update error: %s", exc)
         return {"ok": False}

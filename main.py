@@ -41,6 +41,7 @@ from detection.oui_lookup import OUILookup
 from detection.ssid_patterns import match_ssid
 from detection.confidence import ConfidenceScorer
 from detection.brand_profiles import BrandProfiler
+from detection.wigle_locator import WiGLELocator
 from gps.nmea_parser import GPSReader
 from gps.tracker import LocationTracker
 from web.app import create_app
@@ -208,9 +209,22 @@ class DroneDetectionSystem:
             )
             self.gps.set_fix_callback(self._on_gps_fix)
 
+        # ── WiGLE Wi-Fi positioning ───────────────────────────────────────────
+        self.wigle: Optional[WiGLELocator] = None
+        wigle_cfg = config.get("wigle", {})
+        if (wigle_cfg.get("enabled")
+                and wigle_cfg.get("api_name")
+                and wigle_cfg.get("api_token")):
+            self.wigle = WiGLELocator(
+                api_name=wigle_cfg["api_name"],
+                api_token=wigle_cfg["api_token"],
+            )
+            logger.info("WiGLE Wi-Fi positioning enabled")
+
         # ── Background tasks ─────────────────────────────────────────────────
         self._broadcast_task: Optional[asyncio.Task] = None
         self._cleanup_task:   Optional[asyncio.Task] = None
+        self._wigle_task:     Optional[asyncio.Task] = None
 
     # ── GPS callback ─────────────────────────────────────────────────────────
 
@@ -322,6 +336,40 @@ class DroneDetectionSystem:
             except Exception as exc:
                 logger.error("Cleanup error: %s", exc)
 
+    async def _wigle_loop(self):
+        """
+        Periodically estimate observer position from WiGLE-known access points.
+        Runs only when wigle is enabled in config.
+        Waits 20 s on startup to let the device table fill up first.
+        """
+        wigle_cfg  = self.config.get("wigle", {})
+        interval   = wigle_cfg.get("update_interval", 60)
+        min_refs   = wigle_cfg.get("min_refs", 2)
+
+        await asyncio.sleep(20)   # let packet capture collect some APs first
+
+        while self._running:
+            try:
+                devices = self.device_table.to_json_list()
+                result  = await self.wigle.estimate_position(
+                    devices, min_refs=min_refs
+                )
+                if result:
+                    lat, lon, accuracy = result
+                    self.location_tracker.update_observer(lat, lon, 0.0, "wigle")
+                    # Push an immediate observer update to all connected clients
+                    await self.ws_manager.broadcast({
+                        "type":     "observer_update",
+                        "observer": self.location_tracker.get_observer_dict(),
+                        "ts":       time.time(),
+                    })
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error("WiGLE loop error: %s", exc)
+                await asyncio.sleep(interval)
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def start(self):
@@ -363,13 +411,15 @@ class DroneDetectionSystem:
 
         self._broadcast_task = asyncio.create_task(self._broadcast_loop())
         self._cleanup_task   = asyncio.create_task(self._cleanup_loop())
+        if self.wigle:
+            self._wigle_task = asyncio.create_task(self._wigle_loop())
 
         logger.info("Detection system ready")
 
     async def stop(self):
         self._running = False
 
-        tasks = [t for t in [self._broadcast_task, self._cleanup_task] if t]
+        tasks = [t for t in [self._broadcast_task, self._cleanup_task, self._wigle_task] if t]
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

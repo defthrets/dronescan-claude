@@ -33,6 +33,16 @@ gps:
   baud_rate: 9600
   timeout: 5.0    # seconds before GPS timeout warning
 
+# WiGLE Wi-Fi-based positioning (~20-100m accuracy from nearby access points)
+# Credentials: https://wigle.net → Account → copy "API Name" and "API Token"
+# Free tier: ~10 queries/min — cached 24h so won't hit limits in normal use
+wigle:
+  enabled:         false
+  api_name:        ""       # WiGLE "API Name" (starts with AID...)
+  api_token:       ""       # WiGLE API Token
+  update_interval: 60       # seconds between position refresh attempts
+  min_refs:        2        # minimum matched APs needed to emit a fix
+
 # Web dashboard
 web:
   host: "0.0.0.0"
