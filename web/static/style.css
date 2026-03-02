@@ -389,11 +389,23 @@ tbody td {
   border-radius: var(--radius);
 }
 
-.leaflet-popup-content { margin: 8px 12px; }
+.leaflet-popup-content { margin: 10px 14px; line-height: 1.6; }
 .leaflet-container { background: #050505; }
 .leaflet-control-zoom a { background: #0f0f0f; color: var(--amber); border-color: var(--border); }
 .leaflet-control-zoom a:hover { background: #1a0e00; }
 .leaflet-control-scale-line { background: rgba(10,10,10,0.8); border-color: var(--amber-dim); color: var(--amber-dim); }
+
+/* ── Observer pulsing map marker ─────────────────────────────── */
+@keyframes observer-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(57,255,20,0.7); }
+  70%  { box-shadow: 0 0 0 14px rgba(57,255,20,0); }
+  100% { box-shadow: 0 0 0 0   rgba(57,255,20,0); }
+}
+.observer-marker {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #39FF14; border: 2px solid #fff;
+  animation: observer-pulse 2s infinite;
+}
 
 /* ── Drone pulsing map marker ────────────────────────────────── */
 @keyframes drone-ring {

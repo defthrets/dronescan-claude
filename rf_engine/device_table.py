@@ -45,21 +45,45 @@ class DroneDevice:
     rssi_history: Deque[int] = field(default_factory=lambda: deque(maxlen=60))
 
     def to_dict(self) -> dict:
+        # Live PPS from last 5 seconds of packet history
+        now = time.time()
+        recent_pkts = sum(1 for p in self.packet_history if p.timestamp >= now - 5.0)
+        pps = round(recent_pkts / 5.0, 1)
+
+        # Unique frame types seen
+        frame_types = list({p.frame_type for p in self.packet_history if p.frame_type})
+
+        # Frequency band from channel
+        ch = self.channel or 0
+        if 1 <= ch <= 14:
+            band = "2.4 GHz"
+        elif 36 <= ch <= 177:
+            band = "5 GHz"
+        else:
+            band = "?"
+
+        # OUI (first 3 octets of MAC)
+        oui = ":".join(self.mac.split(":")[:3]).upper() if self.mac else "?"
+
         return {
-            "mac": self.mac,
-            "vendor": self.vendor,
-            "ssid": self.ssid,
-            "channel": self.channel,
-            "rssi": self.rssi,
-            "first_seen": self.first_seen,
-            "last_seen": self.last_seen,
-            "packet_count": self.packet_count,
-            "confidence": round(self.confidence, 1),
+            "mac":              self.mac,
+            "oui":              oui,
+            "vendor":           self.vendor,
+            "ssid":             self.ssid,
+            "channel":          self.channel,
+            "band":             band,
+            "rssi":             self.rssi,
+            "first_seen":       self.first_seen,
+            "last_seen":        self.last_seen,
+            "packet_count":     self.packet_count,
+            "pps":              pps,
+            "confidence":       round(self.confidence, 1),
             "confidence_label": self.confidence_label,
-            "brand": self.brand,
-            "is_drone": self.is_drone,
+            "brand":            self.brand,
+            "is_drone":         self.is_drone,
+            "frame_types":      frame_types,
             # Last 30 RSSI readings for sparkline
-            "rssi_history": list(self.rssi_history)[-30:],
+            "rssi_history":     list(self.rssi_history)[-30:],
         }
 
 
