@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs & runtime output
+*.log
+drone_detect.log
+
+# PCAP captures (potentially large / sensitive)
+pcap_recordings/
+*.pcap
+*.pcapng
+*.cap
+
+# Config overrides with sensitive data (API keys etc.)
+# Keep config.yaml in git — it has no secrets by default
+# but exclude any local overrides:
+config/config.local.yaml
+config/*.local.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+logs/
