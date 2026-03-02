@@ -272,12 +272,14 @@ class DroneDetectionSystem:
         logger.info("Detection system stopped")
 
     def get_stats(self) -> dict:
+        elapsed = time.time() - self._start_time
         return {
-            "interface":     self.config["interface"],
-            "uptime":        time.time() - self._start_time,
-            "total_packets": self._total_packets,
-            "total_devices": len(self.device_table),
-            "drone_devices": len(self.device_table.get_drone_devices()),
+            "interface":       self.config["interface"],
+            "uptime":          elapsed,
+            "total_packets":   self._total_packets,
+            "pps":             round(self._total_packets / max(elapsed, 1), 1),
+            "total_devices":   len(self.device_table),
+            "drone_devices":   len(self.device_table.get_drone_devices()),
             "current_channel": self.hopper.current_channel,
         }
 
@@ -493,6 +495,116 @@ async def _run_scan(config: dict, drones_only: bool):
             await asyncio.sleep(0.5)
     finally:
         await system.stop()
+
+
+# ── Diagnostic mode ───────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--duration", "-d", default=30, type=int,
+              help="Seconds to capture for diagnostics", show_default=True)
+@click.pass_context
+def diag(ctx, duration):
+    """
+    Diagnostic mode: capture packets for N seconds and show ALL seen MACs.
+    Helps verify the capture pipeline is working before deploying in the field.
+    Use this first to confirm packets are being received.
+    """
+    asyncio.run(_run_diag(ctx.obj["config"], duration))
+
+
+async def _run_diag(config: dict, duration: int):
+    from rich.console import Console
+    from rich.table import Table
+    from rich.live import Live
+    import collections
+
+    con = Console()
+    con.print("[bold orange1]═══ DRONE DETECT — DIAGNOSTIC MODE ═══[/bold orange1]")
+    con.print(f"Interface : [cyan]{config['interface']}[/cyan]")
+    con.print(f"Duration  : [cyan]{duration}s[/cyan]")
+    con.print(f"OUI DB    : [cyan]{len(OUILookup()._db)} entries[/cyan]\n")
+
+    system = DroneDetectionSystem(config)
+
+    # Widen thresholds to catch everything for diagnostics
+    config["thresholds"]["low"]    = 0
+    config["thresholds"]["medium"] = 30
+    config["thresholds"]["high"]   = 60
+
+    _stop = asyncio.Event()
+
+    await system.start()
+    con.print("[green]✓ Capture started — showing ALL devices seen...[/green]\n")
+
+    start = time.time()
+    last_pkt_count = 0
+
+    try:
+        while not _stop.is_set() and (time.time() - start) < duration:
+            await asyncio.sleep(2.0)
+
+            elapsed     = time.time() - start
+            pkts_now    = system._total_packets
+            pkt_delta   = pkts_now - last_pkt_count
+            pps         = pkt_delta / 2.0
+            last_pkt_count = pkts_now
+
+            all_devs    = system.device_table.get_all_devices()
+            drone_devs  = [d for d in all_devs if d.is_drone or d.confidence >= 30]
+            ch          = system.hopper.current_channel
+
+            # Build diagnostic table
+            tbl = Table(title=f"[orange1]t={elapsed:.0f}s  pkts={pkts_now}  pps={pps:.1f}  CH={ch}[/orange1]",
+                        style="dim", header_style="bold orange1", min_width=90)
+            tbl.add_column("MAC",       width=19)
+            tbl.add_column("VENDOR",    width=20)
+            tbl.add_column("SSID",      width=22)
+            tbl.add_column("CH",        width=4)
+            tbl.add_column("RSSI",      width=8)
+            tbl.add_column("CONF",      width=8)
+            tbl.add_column("PKTS",      width=7)
+            tbl.add_column("LABEL",     width=8)
+
+            # Sort by confidence desc
+            for d in sorted(all_devs, key=lambda x: -x.confidence):
+                label_style = {
+                    "HIGH":   "bold red",
+                    "MEDIUM": "yellow",
+                    "LOW":    "cyan",
+                    "NONE":   "dim",
+                }.get(d.confidence_label, "dim")
+
+                tbl.add_row(
+                    d.mac,
+                    (d.brand or d.vendor or "—")[:20],
+                    (d.ssid or "—")[:22],
+                    str(d.channel or "?"),
+                    f"{d.rssi} dBm",
+                    f"{d.confidence:.0f}%",
+                    str(d.packet_count),
+                    f"[{label_style}]{d.confidence_label}[/{label_style}]",
+                )
+
+            con.print(tbl)
+
+            if pkts_now == 0 and elapsed > 5:
+                con.print("[bold red]⚠ NO PACKETS received — check interface is in monitor mode:[/bold red]")
+                con.print(f"  sudo airmon-ng start wlan0")
+                con.print(f"  sudo airmon-ng check kill")
+            elif pps < 1 and elapsed > 10:
+                con.print(f"[yellow]⚠ Low packet rate ({pps:.1f} pps) — try moving closer to devices[/yellow]")
+            else:
+                con.print(f"[green]✓ {pkts_now} packets captured, {len(all_devs)} devices, "
+                          f"{len(drone_devs)} potential drones[/green]")
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await system.stop()
+        con.print(f"\n[bold orange1]═══ DIAG COMPLETE ═══[/bold orange1]")
+        con.print(f"Total packets : [cyan]{system._total_packets}[/cyan]")
+        con.print(f"Total devices : [cyan]{len(system.device_table.get_all_devices())}[/cyan]")
+        con.print(f"Drones found  : [cyan]{len(system.device_table.get_drone_devices())}[/cyan]")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

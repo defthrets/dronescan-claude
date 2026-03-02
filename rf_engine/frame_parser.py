@@ -99,7 +99,7 @@ def _norm_mac(mac: Optional[str]) -> str:
 
 def _extract_rssi(packet) -> int:
     try:
-        from scapy.layers.radiohead import RadioTap  # type: ignore
+        from scapy.layers.dot11 import RadioTap  # type: ignore
         if packet.haslayer(RadioTap):
             rt = packet[RadioTap]
             if hasattr(rt, "dBm_AntSignal") and rt.dBm_AntSignal is not None:
@@ -111,7 +111,7 @@ def _extract_rssi(packet) -> int:
 
 def _extract_channel(packet) -> int:
     try:
-        from scapy.layers.radiohead import RadioTap  # type: ignore
+        from scapy.layers.dot11 import RadioTap  # type: ignore
         if packet.haslayer(RadioTap):
             rt = packet[RadioTap]
             if hasattr(rt, "ChannelFrequency") and rt.ChannelFrequency:

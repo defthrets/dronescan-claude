@@ -75,12 +75,12 @@ def create_app(
         all_devs   = device_table.get_all_devices()
         drone_devs = device_table.get_drone_devices()
         return {
-            "uptime":         time.time() - _START_TIME,
-            "total_devices":  len(all_devs),
-            "drone_devices":  len(drone_devs),
-            "observer":       location_tracker.get_observer_dict(),
-            "ws_connections": ws_manager.count,
-            "ts":             time.time(),
+            "uptime":          time.time() - _START_TIME,
+            "total_devices":   len(all_devs),
+            "drone_devices":   len(drone_devs),
+            "observer":        location_tracker.get_observer_dict(),
+            "ws_connections":  ws_manager.count,
+            "ts":              time.time(),
         }
 
     @app.get("/api/config")
@@ -91,6 +91,33 @@ def create_app(
             "theme":              theme,
             "map_provider":       webcfg.get("map_provider", "openstreetmap"),
             "google_maps_api_key": webcfg.get("google_maps_api_key", ""),
+        }
+
+    @app.post("/api/gps/update")
+    async def update_gps_from_browser(body: dict):
+        """
+        Accept GPS coordinates pushed from the browser's Geolocation API.
+        Falls back to browser GPS when no hardware GPS dongle is connected.
+        """
+        try:
+            lat = float(body.get("lat", 0))
+            lon = float(body.get("lon", 0))
+            alt = float(body.get("alt", 0))
+            if lat and lon:
+                location_tracker.update_observer(lat, lon, alt)
+                logger.debug("Browser GPS fix: %.6f, %.6f", lat, lon)
+                return {"ok": True, "source": "browser"}
+        except Exception as exc:
+            logger.debug("GPS update error: %s", exc)
+        return {"ok": False}
+
+    @app.get("/api/gps/status")
+    async def get_gps_status():
+        obs = location_tracker.get_observer_dict()
+        return {
+            "active":    obs is not None,
+            "observer":  obs,
+            "ts":        time.time(),
         }
 
     @app.get("/api/export")
