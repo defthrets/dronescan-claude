@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  drone-detect:
+    build: .
+    image: drone-detect:latest
+    container_name: drone-detect
+
+    # Monitor mode capture requires host networking + raw socket capabilities
+    network_mode: host
+    privileged: true          # or use cap_add below instead
+
+    # cap_add:                # Least-privilege alternative to privileged:
+    #   - NET_RAW
+    #   - NET_ADMIN
+    # network_mode: host
+
+    environment:
+      - PYTHONUNBUFFERED=1
+
+    volumes:
+      # Persist logs and PCAP recordings
+      - ./logs:/app/logs
+      - ./pcap_recordings:/app/pcap_recordings
+      # Override config without rebuilding
+      - ./config:/app/config:ro
+
+    ports:
+      - "8080:8080"           # Only needed if NOT using network_mode: host
+
+    restart: unless-stopped
+
+    command: ["web", "--host", "0.0.0.0", "--port", "8080"]

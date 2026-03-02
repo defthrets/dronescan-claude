@@ -1,0 +1,68 @@
+# ============================================================
+# Drone Detection System - Configuration
+# ============================================================
+
+# Wi-Fi interface in monitor mode (set up before running)
+interface: wlan0mon
+
+# Channel hopping configuration
+channels:
+  bands_2_4ghz: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  bands_5ghz:   [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112,
+                  116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
+  hop_interval: 0.5       # seconds per channel
+  fixed_channel: null     # set to int to disable hopping (e.g. 6)
+
+# Confidence scoring weights — must conceptually cover 0-100 range
+confidence_weights:
+  oui_match:        40   # Known drone manufacturer MAC prefix
+  ssid_match:       30   # Known drone SSID pattern
+  channel_match:    15   # Drone-typical channel usage
+  traffic_behavior: 15   # Packet rate consistent with telemetry
+
+# Confidence thresholds for label assignment (percentage)
+thresholds:
+  low:    30   # "LOW" — worth monitoring
+  medium: 60   # "MEDIUM" — probable drone
+  high:   80   # "HIGH" — very likely drone
+
+# GPS dongle configuration
+gps:
+  enabled: false
+  port: /dev/ttyUSB0
+  baud_rate: 9600
+  timeout: 5.0    # seconds before GPS timeout warning
+
+# Web dashboard
+web:
+  host: "0.0.0.0"
+  port: 8080
+  map_provider: openstreetmap   # openstreetmap | google
+  google_maps_api_key: ""       # only used if map_provider is google
+
+# PCAP recording (saved alongside the binary)
+pcap:
+  enabled: false
+  output_dir: "./pcap_recordings"
+  rotate_size_mb: 100
+
+# Logging
+logging:
+  level: INFO           # DEBUG | INFO | WARNING | ERROR
+  file: "drone_detect.log"
+  max_bytes: 10485760   # 10 MB
+  backup_count: 3
+
+# UI theme
+theme:
+  style: fallout          # fallout | minimal
+  primary_color: "#FF8C00"
+  scanlines: true
+  flicker: true
+  flicker_intensity: 0.02
+
+# Device lifecycle
+tracking:
+  device_timeout: 300       # seconds before removing an inactive device
+  history_length: 100       # max packet records stored per device
+  min_packets_for_traffic_analysis: 10

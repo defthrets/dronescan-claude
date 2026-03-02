@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DRONE DETECT v1.0</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+  <!-- Leaflet.js for mapping -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+
+<!-- CRT scanline overlay -->
+<div class="scanlines" aria-hidden="true"></div>
+
+<!-- ── Header ──────────────────────────────────────────────────────────── -->
+<header>
+  <div class="header-left">
+    <span class="header-icon">◈</span>
+    <div>
+      <div class="header-title flicker">DRONE DETECT</div>
+      <div class="header-sub">RF MONITORING SYSTEM v1.0</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="status-bar">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">CONNECTING...</span>
+    </div>
+    <div class="stat-pill">DEVICES: <strong id="statTotal">0</strong></div>
+    <div class="stat-pill">DRONES:  <strong id="statDrones" class="danger">0</strong></div>
+    <div class="stat-pill">UPTIME:  <strong id="statUptime">00:00:00</strong></div>
+  </div>
+</header>
+
+<!-- ── Main layout ─────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- Left: Device table -->
+  <section class="panel" id="tablePanel">
+    <div class="panel-header">
+      <span>◆ DETECTED DEVICES</span>
+      <div class="panel-controls">
+        <button class="btn" onclick="filterDrones()" id="filterBtn">SHOW ALL</button>
+        <button class="btn" onclick="exportJSON()">EXPORT</button>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table id="deviceTable">
+        <thead>
+          <tr>
+            <th>MAC ADDRESS</th>
+            <th>VENDOR / MODEL</th>
+            <th>SSID</th>
+            <th>CH</th>
+            <th>RSSI</th>
+            <th>CONFIDENCE</th>
+            <th>PKTS</th>
+            <th>LAST SEEN</th>
+          </tr>
+        </thead>
+        <tbody id="deviceTableBody">
+          <tr class="empty-row"><td colspan="8">— NO DEVICES DETECTED —</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- RSSI Sparkline detail panel (shown on row click) -->
+    <div id="detailPanel" class="detail-panel hidden">
+      <div class="detail-header">
+        <span id="detailMac">—</span>
+        <button class="btn btn-sm" onclick="closeDetail()">✕ CLOSE</button>
+      </div>
+      <div class="detail-grid">
+        <div><span class="label">Brand</span><span id="detailBrand">—</span></div>
+        <div><span class="label">SSID</span><span id="detailSsid">—</span></div>
+        <div><span class="label">Channel</span><span id="detailChannel">—</span></div>
+        <div><span class="label">Confidence</span><span id="detailConf">—</span></div>
+        <div><span class="label">First Seen</span><span id="detailFirst">—</span></div>
+        <div><span class="label">Packets</span><span id="detailPkts">—</span></div>
+      </div>
+      <div class="sparkline-label">RSSI HISTORY (dBm)</div>
+      <canvas id="rssiCanvas" width="480" height="60"></canvas>
+    </div>
+  </section>
+
+  <!-- Right: Map + GPS -->
+  <section class="panel" id="mapPanel">
+    <div class="panel-header">
+      <span>◆ LIVE MAP</span>
+      <div id="gpsStatus" class="gps-status">GPS: INACTIVE</div>
+    </div>
+    <div id="map"></div>
+    <div class="map-legend">
+      <span class="legend-item"><span class="legend-dot high"></span>HIGH</span>
+      <span class="legend-item"><span class="legend-dot medium"></span>MEDIUM</span>
+      <span class="legend-item"><span class="legend-dot low"></span>LOW</span>
+      <span class="legend-item"><span class="legend-dot observer"></span>OBSERVER</span>
+    </div>
+  </section>
+
+</main>
+
+<!-- ── Alert bar ───────────────────────────────────────────────────────── -->
+<div id="alertBar" class="alert-bar hidden"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

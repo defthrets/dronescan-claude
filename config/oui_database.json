@@ -1,0 +1,210 @@
+{
+  "version": "1.1.0",
+  "last_updated": "2025-01-01",
+  "description": "Known drone manufacturer OUI database for Wi-Fi detection",
+  "manufacturers": {
+    "DJI": {
+      "full_name": "DJI Technology Co., Ltd.",
+      "country": "CN",
+      "confidence_boost": 40,
+      "ouis": [
+        "60:60:1F",
+        "48:1C:B9",
+        "34:D2:62",
+        "08:F1:EA",
+        "90:3A:E6",
+        "A0:14:3D",
+        "BC:AF:00",
+        "18:20:EC",
+        "58:9C:FC",
+        "0C:AE:7D",
+        "78:A1:06",
+        "4C:3F:D3",
+        "E0:B6:F5",
+        "C4:C1:74",
+        "AC:AA:15"
+      ],
+      "ssid_patterns": [
+        "^DJI[-_].*",
+        "^MAVIC[-_].*",
+        "^PHANTOM[-_].*",
+        "^SPARK[-_].*",
+        "^MINI[-_].*",
+        "^AIR[-_]2.*",
+        "^FPV[-_].*",
+        "^Inspire[-_].*",
+        "^Matrice[-_].*",
+        "^Agras[-_].*"
+      ],
+      "known_channels": [1, 6, 11, 36, 40, 44, 48, 149, 153, 157, 161],
+      "frequency_bands": ["2.4GHz", "5.8GHz"],
+      "models": {
+        "Mavic Air 2":  {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "Mavic Air 2S": {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "Mavic Mini":   {"channels": [1, 6, 11],       "band": "2.4GHz"},
+        "Mini 2":       {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "Mini 3 Pro":   {"channels": [149, 153, 157, 161], "band": "5.8GHz"},
+        "Mini 4 Pro":   {"channels": [149, 153, 157, 161], "band": "5.8GHz"},
+        "Phantom 4":    {"channels": [1, 6, 11],       "band": "2.4GHz"},
+        "Phantom 4 Pro":{"channels": [1, 6, 11],       "band": "2.4GHz"},
+        "Mavic 3":      {"channels": [149, 153, 157, 161], "band": "5.8GHz"},
+        "Mavic 3 Pro":  {"channels": [149, 153, 157, 161], "band": "5.8GHz"},
+        "Spark":        {"channels": [1, 6, 11],       "band": "2.4GHz"},
+        "DJI FPV":      {"channels": [149, 153, 157, 161], "band": "5.8GHz"},
+        "Inspire 2":    {"channels": [1, 6, 11, 36, 40], "band": "2.4GHz"},
+        "Matrice 300":  {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "Agras T30":    {"channels": [1, 6, 11],       "band": "2.4GHz"}
+      }
+    },
+
+    "Autel": {
+      "full_name": "Autel Robotics",
+      "country": "US",
+      "confidence_boost": 38,
+      "ouis": [
+        "84:F7:03",
+        "00:0A:F5",
+        "B4:EE:D4",
+        "28:B2:BD",
+        "AC:BC:32"
+      ],
+      "ssid_patterns": [
+        "^Autel[-_].*",
+        "^EVO[-_].*",
+        "^EVO_.*",
+        "^Dragonfish[-_].*"
+      ],
+      "known_channels": [1, 6, 11, 36, 40, 44, 48, 149, 153, 157, 161],
+      "frequency_bands": ["2.4GHz", "5.8GHz"],
+      "models": {
+        "EVO Nano":   {"channels": [1, 6, 11],       "band": "2.4GHz"},
+        "EVO Nano+":  {"channels": [36, 40],         "band": "5GHz"},
+        "EVO Lite":   {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "EVO Lite+":  {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "EVO II Pro": {"channels": [149, 153],        "band": "5.8GHz"},
+        "EVO II V3":  {"channels": [149, 153, 157],   "band": "5.8GHz"},
+        "EVO Max 4T": {"channels": [149, 153, 157, 161], "band": "5.8GHz"},
+        "Dragonfish": {"channels": [149, 153],        "band": "5.8GHz"}
+      }
+    },
+
+    "Parrot": {
+      "full_name": "Parrot SA",
+      "country": "FR",
+      "confidence_boost": 35,
+      "ouis": [
+        "00:26:7E",
+        "90:03:B7",
+        "A0:14:3D",
+        "00:12:1C",
+        "0C:90:7D",
+        "1C:AB:A7"
+      ],
+      "ssid_patterns": [
+        "^Parrot[-_].*",
+        "^Bebop[-_].*",
+        "^ANAFI[-_].*",
+        "^Disco[-_].*",
+        "^Mambo[-_].*",
+        "^Swing[-_].*"
+      ],
+      "known_channels": [1, 6, 11, 36, 40, 44, 48],
+      "frequency_bands": ["2.4GHz", "5GHz"],
+      "models": {
+        "ANAFI":       {"channels": [36, 40],   "band": "5GHz"},
+        "ANAFI FPV":   {"channels": [36, 40],   "band": "5GHz"},
+        "ANAFI USA":   {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "ANAFI Ai":    {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "Bebop 2":     {"channels": [1, 6, 11], "band": "2.4GHz"},
+        "Mambo":       {"channels": [1, 6, 11], "band": "2.4GHz"},
+        "Swing":       {"channels": [1, 6, 11], "band": "2.4GHz"},
+        "Disco":       {"channels": [1, 6, 11], "band": "2.4GHz"}
+      }
+    },
+
+    "Skydio": {
+      "full_name": "Skydio Inc.",
+      "country": "US",
+      "confidence_boost": 35,
+      "ouis": [
+        "C4:93:D9",
+        "00:E7:4C",
+        "3C:28:6D"
+      ],
+      "ssid_patterns": [
+        "^SKYDIO[-_].*",
+        "^Skydio[-_].*",
+        "^S2[-_].*",
+        "^X2[-_].*",
+        "^R1[-_].*"
+      ],
+      "known_channels": [36, 40, 44, 48, 149, 153, 157, 161],
+      "frequency_bands": ["5GHz", "5.8GHz"],
+      "models": {
+        "Skydio 2":   {"channels": [149, 153],         "band": "5.8GHz"},
+        "Skydio 2+":  {"channels": [149, 153],         "band": "5.8GHz"},
+        "Skydio X2":  {"channels": [36, 40, 44, 48],   "band": "5GHz"},
+        "Skydio R1":  {"channels": [36, 40],            "band": "5GHz"}
+      }
+    },
+
+    "Yuneec": {
+      "full_name": "Yuneec International",
+      "country": "CN",
+      "confidence_boost": 30,
+      "ouis": [
+        "2C:AA:8E",
+        "00:45:E2",
+        "40:49:0F"
+      ],
+      "ssid_patterns": [
+        "^YUNEEC[-_].*",
+        "^Typhoon[-_].*",
+        "^Mantis[-_].*",
+        "^H520[-_].*",
+        "^H480[-_].*"
+      ],
+      "known_channels": [1, 6, 11, 36, 40, 44, 48],
+      "frequency_bands": ["2.4GHz", "5GHz"],
+      "models": {
+        "Typhoon H":    {"channels": [1, 6, 11], "band": "2.4GHz"},
+        "Typhoon H Pro":{"channels": [1, 6, 11], "band": "2.4GHz"},
+        "Mantis G":     {"channels": [36, 40],   "band": "5GHz"},
+        "Mantis Q":     {"channels": [1, 6, 11], "band": "2.4GHz"},
+        "H520":         {"channels": [36, 40, 44, 48], "band": "5GHz"},
+        "H480":         {"channels": [1, 6, 11], "band": "2.4GHz"}
+      }
+    },
+
+    "Hubsan": {
+      "full_name": "Hubsan Co., Ltd.",
+      "country": "CN",
+      "confidence_boost": 25,
+      "ouis": [
+        "0C:80:63",
+        "00:1E:42"
+      ],
+      "ssid_patterns": [
+        "^HUBSAN[-_].*",
+        "^Zino[-_].*",
+        "^H117.*"
+      ],
+      "known_channels": [1, 6, 11],
+      "frequency_bands": ["2.4GHz"],
+      "models": {
+        "Zino 2":    {"channels": [1, 6, 11], "band": "2.4GHz"},
+        "Zino Mini": {"channels": [1, 6, 11], "band": "2.4GHz"}
+      }
+    }
+  },
+
+  "generic_drone_indicators": {
+    "ssid_keywords": [
+      "drone", "UAV", "UAS", "quadcopter", "copter",
+      "FPV", "aerial", "pilot", "mavic", "phantom", "spark", "mini"
+    ],
+    "high_rate_pps_threshold": 50,
+    "telemetry_pps_threshold": 20,
+    "beacon_interval_typical_ms": 100
+  }
+}
