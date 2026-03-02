@@ -42,6 +42,7 @@ from detection.ssid_patterns import match_ssid
 from detection.confidence import ConfidenceScorer
 from detection.brand_profiles import BrandProfiler
 from detection.wigle_locator import WiGLELocator
+from rf_engine.ap_scanner import APScanner
 from gps.nmea_parser import GPSReader
 from gps.tracker import LocationTracker
 from web.app import create_app
@@ -209,6 +210,9 @@ class DroneDetectionSystem:
             )
             self.gps.set_fix_callback(self._on_gps_fix)
 
+        # ── AP beacon harvester (feeds WiGLE locator) ────────────────────────
+        self.ap_scanner = APScanner()
+
         # ── WiGLE Wi-Fi positioning ───────────────────────────────────────────
         self.wigle: Optional[WiGLELocator] = None
         wigle_cfg = config.get("wigle", {})
@@ -244,6 +248,10 @@ class DroneDetectionSystem:
         frame = parse_frame(packet)
         if not frame:
             return
+
+        # Feed ALL beacon / probe-response frames to the AP reference table
+        # (before drone filtering — we want every nearby AP for WiGLE positioning)
+        self.ap_scanner.record_frame(frame)
 
         mac = frame.mac_src
         # Skip broadcast/multicast and null addresses
@@ -338,31 +346,67 @@ class DroneDetectionSystem:
 
     async def _wigle_loop(self):
         """
-        Periodically estimate observer position from WiGLE-known access points.
-        Runs only when wigle is enabled in config.
-        Waits 20 s on startup to let the device table fill up first.
-        """
-        wigle_cfg  = self.config.get("wigle", {})
-        interval   = wigle_cfg.get("update_interval", 60)
-        min_refs   = wigle_cfg.get("min_refs", 2)
+        Periodically estimate observer position using WiGLE-known access points.
 
-        await asyncio.sleep(20)   # let packet capture collect some APs first
+        Steps each cycle:
+          1. Run a system Wi-Fi scan (nmcli/iw/airport) every 5 min to
+             supplement the beacon-harvested AP table.
+          2. Query WiGLE for GPS coordinates of nearby APs.
+          3. Compute RSSI-weighted centroid → observer position estimate.
+          4. Push an immediate 'observer_update' WS message if a fix is found.
+
+        Waits 20 s on startup so the beacon harvester can collect some APs first.
+        """
+        wigle_cfg       = self.config.get("wigle", {})
+        interval        = wigle_cfg.get("update_interval", 60)
+        min_refs        = wigle_cfg.get("min_refs", 2)
+        last_sys_scan   = 0.0
+        sys_scan_period = 300.0   # run system scan every 5 min
+
+        await asyncio.sleep(20)   # let beacon harvester collect initial APs
 
         while self._running:
             try:
-                devices = self.device_table.to_json_list()
-                result  = await self.wigle.estimate_position(
-                    devices, min_refs=min_refs
+                # ── 1. Supplemental system scan (periodic) ─────────────────────
+                if time.time() - last_sys_scan >= sys_scan_period:
+                    added = await self.ap_scanner.scan_system_aps()
+                    last_sys_scan = time.time()
+                    if added:
+                        logger.info(
+                            "System Wi-Fi scan: +%d APs  (total reference APs: %d)",
+                            added, self.ap_scanner.ap_count(),
+                        )
+
+                # ── 2. Build candidate list: all reference APs, drones excluded ─
+                drone_macs = {
+                    d["mac"] for d in self.device_table.to_json_list()
+                    if d.get("confidence", 0) >= 60
+                }
+                candidates = self.ap_scanner.get_candidates(exclude_macs=drone_macs)
+
+                logger.debug(
+                    "WiGLE: querying with %d AP candidates (drones excluded: %d)",
+                    len(candidates), len(drone_macs),
                 )
+
+                # ── 3. WiGLE position estimate ─────────────────────────────────
+                result = await self.wigle.estimate_position(
+                    candidates, min_refs=min_refs
+                )
+
+                # ── 4. Broadcast if new fix found ──────────────────────────────
                 if result:
                     lat, lon, accuracy = result
                     self.location_tracker.update_observer(lat, lon, 0.0, "wigle")
-                    # Push an immediate observer update to all connected clients
                     await self.ws_manager.broadcast({
                         "type":     "observer_update",
                         "observer": self.location_tracker.get_observer_dict(),
                         "ts":       time.time(),
                     })
+
+                # Prune stale APs from the reference table
+                self.ap_scanner.clear_stale()
+
                 await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 break
@@ -443,6 +487,7 @@ class DroneDetectionSystem:
             "total_devices":   len(self.device_table),
             "drone_devices":   len(self.device_table.get_drone_devices()),
             "current_channel": self.hopper.current_channel,
+            "ref_aps":         self.ap_scanner.ap_count(),
         }
 
 
@@ -521,6 +566,7 @@ async def _run_web(config: dict):
         location_tracker=system.location_tracker,
         ws_manager=system.ws_manager,
         config=config,
+        ap_scanner=system.ap_scanner,
     )
 
     web_cfg  = config["web"]
