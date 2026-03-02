@@ -661,10 +661,12 @@ function updateStats(stats) {
   document.getElementById('statTotal').textContent  = total;
   document.getElementById('statDrones').textContent = drones;
   if (stats) {
-    const ppsEl = document.getElementById('statPps');
-    const chEl  = document.getElementById('statChannel');
+    const ppsEl  = document.getElementById('statPps');
+    const chEl   = document.getElementById('statChannel');
+    const apEl   = document.getElementById('statRefAps');
     if (ppsEl) ppsEl.textContent = stats.pps != null ? stats.pps.toFixed(1) : '0';
     if (chEl)  chEl.textContent  = stats.current_channel || '—';
+    if (apEl)  apEl.textContent  = stats.ref_aps != null ? stats.ref_aps : '0';
   }
 }
 

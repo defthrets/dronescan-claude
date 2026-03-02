@@ -28,6 +28,7 @@ def create_app(
     location_tracker,
     ws_manager: WebSocketManager,
     config: dict,
+    ap_scanner=None,
 ) -> FastAPI:
     """
     Build and return the FastAPI application.
@@ -119,6 +120,19 @@ def create_app(
             "active":    obs is not None,
             "observer":  obs,
             "ts":        time.time(),
+        }
+
+    @app.get("/api/aps")
+    async def get_reference_aps():
+        """
+        Reference AP table used for WiGLE-based positioning.
+        Shows every access point collected from beacon frames + system scans.
+        """
+        aps = ap_scanner.get_all() if ap_scanner else []
+        return {
+            "count": len(aps),
+            "aps":   aps,
+            "ts":    time.time(),
         }
 
     @app.get("/api/export")
