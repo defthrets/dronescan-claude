@@ -1,0 +1,62 @@
+# =============================================================================
+# drone-detect.service — systemd unit for auto-start on Raspberry Pi
+# =============================================================================
+#
+# Install:
+#   sudo cp scripts/drone-detect.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable drone-detect
+#   sudo systemctl start  drone-detect
+#
+# Logs:
+#   sudo journalctl -u drone-detect -f
+#
+# Notes:
+#   - Runs as root (required for raw packet capture + monitor mode)
+#   - ExecStartPre kills interfering processes and starts monitor mode
+#   - Automatically restarts on crash
+#   - Edit PHYS_IFACE below to match your USB Wi-Fi dongle (e.g. wlan1)
+# =============================================================================
+
+[Unit]
+Description=Drone Detection System
+Documentation=https://github.com/defthrets/dronescan-claude
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/drone-detect
+
+# ── Pre-start: set up monitor mode ───────────────────────────────────────────
+# Kill processes that fight for the wireless interface (wpa_supplicant etc.)
+ExecStartPre=/bin/bash -c 'airmon-ng check kill 2>/dev/null || true'
+
+# Put your dongle in monitor mode.
+# Change wlan1 to match your actual interface (check with: iw dev)
+ExecStartPre=/bin/bash -c 'airmon-ng start wlan1 2>/dev/null || true'
+
+# Brief pause to allow the monitor interface to come up
+ExecStartPre=/bin/sleep 2
+
+# ── Main process ─────────────────────────────────────────────────────────────
+ExecStart=/opt/drone-detect/.venv/bin/python \
+          /opt/drone-detect/main.py \
+          --config /opt/drone-detect/config/config.yaml \
+          web \
+          --port 8080
+
+# ── Restart behaviour ────────────────────────────────────────────────────────
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=120
+StartLimitBurst=5
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=drone-detect
+
+[Install]
+WantedBy=multi-user.target
