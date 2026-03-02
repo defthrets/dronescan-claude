@@ -1,0 +1,146 @@
+# =============================================================================
+# Drone Detection System — Raspberry Pi Configuration Template
+# =============================================================================
+#
+# QUICK START
+# ───────────
+# 1. Copy this file:
+#       cp config/config.pi.yaml config/config.yaml
+#
+# 2. Put your Wi-Fi dongle in monitor mode:
+#       sudo airmon-ng check kill
+#       sudo airmon-ng start wlan1       # ← your dongle interface
+#    This creates wlan1mon (or similar) — update 'interface:' below.
+#
+# 3. Edit this file:
+#    - Set interface: to your monitor-mode interface (e.g. wlan1mon)
+#    - Set gps.port: to your GPS device (e.g. /dev/ttyUSB0)
+#    - Enable wigle: if you have a WiGLE account
+#
+# 4. Start:
+#       sudo python main.py --config config/config.yaml web
+#
+# Or run the automated setup script:
+#       sudo bash scripts/setup_pi.sh
+# =============================================================================
+
+
+# ── Wi-Fi Interface ───────────────────────────────────────────────────────────
+# The interface MUST already be in monitor mode before starting.
+# Common names after airmon-ng: wlan1mon, wlan0mon, wlan2mon
+# Check with: iw dev
+interface: wlan1mon
+
+
+# ── Channel Hopping ───────────────────────────────────────────────────────────
+channels:
+  bands_2_4ghz: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  bands_5ghz:   [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112,
+                  116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
+
+  # Time spent on each channel before hopping.
+  # 0.5s is a good balance between coverage and per-channel dwell time.
+  # Reduce to 0.3s if you want faster channel cycling.
+  hop_interval: 0.5
+
+  # YAGI TIP: Set this to a specific channel to lock the scanner for
+  # direction-finding with the Yagi. DJI drones typically use CH 6 or 36.
+  # Rotate the Yagi while watching RSSI — peak = drone direction.
+  # Set to null to re-enable channel hopping.
+  fixed_channel: null
+
+
+# ── Detection Confidence Weights ─────────────────────────────────────────────
+confidence_weights:
+  oui_match:        40   # Matched DJI / drone manufacturer MAC prefix
+  ssid_match:       30   # SSID contains known drone pattern (TELLO-, DJI-, etc.)
+  channel_match:    15   # Transmitting on typical drone control channel
+  traffic_behavior: 15   # High packet rate consistent with video telemetry
+
+
+# ── Confidence Thresholds ─────────────────────────────────────────────────────
+thresholds:
+  low:    30   # Worth watching
+  medium: 60   # Probable drone — alert shown
+  high:   80   # Very likely drone — high-priority alert
+
+
+# ── Hardware GPS ─────────────────────────────────────────────────────────────
+# Recommended: u-blox NEO-6M / NEO-7M / NEO-8M / NEO-M8N
+#
+# USB GPS (most common):
+#   port: /dev/ttyUSB0    (plug in and check: ls /dev/ttyUSB*)
+#   port: /dev/ttyACM0    (some modules use ACM)
+#
+# GPIO UART GPS (connected to Pi TX/RX pins):
+#   First, disable the serial login console:
+#     sudo raspi-config → Interface Options → Serial Port
+#     → Disable login shell  → Enable hardware serial port → Reboot
+#   Then use:
+#   port: /dev/serial0    (symlink, works on all Pi models)
+#   port: /dev/ttyAMA0    (Pi 4 primary UART)
+#   port: /dev/ttyS0      (Pi 3 mini-UART — may need: dtoverlay=miniuart-bt)
+#
+gps:
+  enabled:   true
+  port:      /dev/ttyUSB0
+  baud_rate: 9600       # Standard u-blox baud rate
+  timeout:   5.0
+
+
+# ── WiGLE Wi-Fi Positioning ───────────────────────────────────────────────────
+# Uses nearby access points + WiGLE crowdsourced database for ~20-100m
+# position accuracy when GPS hasn't fixed yet (great for indoor starts).
+# Free account: https://wigle.net → Account → copy API Name and API Token
+#
+wigle:
+  enabled:         false
+  api_name:        ""       # WiGLE "API Name" (starts with AID...)
+  api_token:       ""       # WiGLE API Token
+  update_interval: 60       # seconds between estimates
+  min_refs:        2        # minimum AP matches for a valid fix
+
+
+# ── Web Dashboard ─────────────────────────────────────────────────────────────
+# Access via http://<pi-ip>:8080  on any device on the same network.
+# For phone GPS over LAN: start with --ssl flag → use https://<pi-ip>:8443
+#
+web:
+  host:     "0.0.0.0"   # listen on all interfaces
+  port:     8080
+  ssl_port: 8443        # HTTPS port (--ssl flag)
+  map_provider: openstreetmap
+
+
+# ── PCAP Recording ────────────────────────────────────────────────────────────
+# Enable to save raw packet captures for later analysis with Wireshark.
+# Each file is rotated at rotate_size_mb MB.
+#
+pcap:
+  enabled:        false
+  output_dir:     "/opt/drone-detect/pcap_recordings"
+  rotate_size_mb: 100
+
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level:        INFO                                # DEBUG for troubleshooting
+  file:         "/opt/drone-detect/drone_detect.log"
+  max_bytes:    10485760   # 10 MB
+  backup_count: 5
+
+
+# ── UI Theme ──────────────────────────────────────────────────────────────────
+theme:
+  style:             fallout
+  primary_color:     "#FF8C00"
+  scanlines:         true
+  flicker:           true
+  flicker_intensity: 0.02
+
+
+# ── Device Lifecycle ──────────────────────────────────────────────────────────
+tracking:
+  device_timeout:                  300   # remove device after 5 min without packets
+  history_length:                  100   # RSSI samples stored per device
+  min_packets_for_traffic_analysis: 10
