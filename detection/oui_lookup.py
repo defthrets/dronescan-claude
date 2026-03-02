@@ -19,10 +19,17 @@ class OUILookup:
     The OUI is the first 3 octets of a MAC address (XX:XX:XX).
     """
 
-    def __init__(self, db_path: str = "config/oui_database.json"):
+    # Default path resolved relative to this file so it works regardless of CWD
+    _DEFAULT_DB = str(Path(__file__).parent.parent / "config" / "oui_database.json")
+
+    def __init__(self, db_path: str = ""):
         self._oui_map: Dict[str, dict] = {}
         self._raw_db: dict = {}
-        self._load(db_path)
+        # Try given path first, then fall back to path relative to this module
+        if db_path and Path(db_path).exists():
+            self._load(db_path)
+        else:
+            self._load(self._DEFAULT_DB)
 
     # ── loading ──────────────────────────────────────────────────────────────
 

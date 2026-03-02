@@ -222,30 +222,37 @@ class DroneDetectionSystem:
 
     async def start(self):
         self._running = True
+        demo_mode = self.config.get("_demo_mode", False)
 
-        # ── Resolve the actual monitor-mode interface ──────────────────────────
-        # Handles the common case where airmon-ng renamed wlan1 → wlan1mon
-        # but config still says wlan0mon (or any other mismatch).
-        try:
-            resolved = resolve_interface(self.config["interface"])
-        except RuntimeError as exc:
-            logger.error("Interface error: %s", exc)
-            raise SystemExit(1)
-
-        if resolved != self.config["interface"]:
+        if demo_mode:
             logger.warning(
-                "Interface override: '%s' → '%s'  "
-                "(update config.yaml to silence this warning)",
-                self.config["interface"], resolved,
+                "DEMO MODE — capture disabled (no wireless adapter required). "
+                "Web UI is fully functional; use on Linux with adapter for live detection."
             )
-            self.config["interface"] = resolved
-            self.capture.interface   = resolved
-            self.hopper.interface    = resolved
+        else:
+            # ── Resolve the actual monitor-mode interface ──────────────────────
+            # Handles the common case where airmon-ng renamed wlan1 → wlan1mon
+            # but config still says wlan0mon (or any other mismatch).
+            try:
+                resolved = resolve_interface(self.config["interface"])
+            except RuntimeError as exc:
+                logger.error("Interface error: %s", exc)
+                raise SystemExit(1)
 
-        logger.info("Starting drone detection on interface '%s'", self.config["interface"])
+            if resolved != self.config["interface"]:
+                logger.warning(
+                    "Interface override: '%s' → '%s'  "
+                    "(update config.yaml to silence this warning)",
+                    self.config["interface"], resolved,
+                )
+                self.config["interface"] = resolved
+                self.capture.interface   = resolved
+                self.hopper.interface    = resolved
 
-        await self.capture.start(self._process_packet)
-        await self.hopper.start()
+            logger.info("Starting drone detection on interface '%s'", self.config["interface"])
+
+            await self.capture.start(self._process_packet)
+            await self.hopper.start()
 
         if self.gps:
             await self.gps.start()
@@ -263,8 +270,9 @@ class DroneDetectionSystem:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        await self.capture.stop()
-        await self.hopper.stop()
+        if not self.config.get("_demo_mode", False):
+            await self.capture.stop()
+            await self.hopper.stop()
 
         if self.gps:
             await self.gps.stop()
@@ -318,19 +326,24 @@ def cli(ctx, config, interface):
 @cli.command()
 @click.option("--host", default=None, help="Override web host")
 @click.option("--port", "-p", default=None, type=int, help="Override web port")
+@click.option("--demo", is_flag=True, default=False,
+              help="Start web UI only (no capture) — useful without a wireless adapter")
 @click.pass_context
-def web(ctx, host, port):
+def web(ctx, host, port, demo):
     """Launch the web dashboard + REST API + WebSocket stream."""
     cfg = ctx.obj["config"]
     if host:
         cfg["web"]["host"] = host
     if port:
         cfg["web"]["port"] = port
+    if demo:
+        cfg["_demo_mode"] = True
 
     asyncio.run(_run_web(cfg))
 
 
 async def _run_web(config: dict):
+    demo_mode = config.get("_demo_mode", False)
     system = DroneDetectionSystem(config)
     app    = create_app(
         device_table=system.device_table,
