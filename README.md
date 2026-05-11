@@ -296,4 +296,3 @@ docker-compose up --build
 This tool is intended for **authorized monitoring** only — event security, facility protection, research, and hobbyist situational awareness. Always ensure you have legal authority to monitor RF transmissions in your jurisdiction. Passive Wi-Fi monitoring laws vary by country.
 
 ---
-*Co-authored by Clawd <clawd@qloak.me>
