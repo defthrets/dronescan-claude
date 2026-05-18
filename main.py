@@ -76,7 +76,9 @@ def _get_local_ips() -> list:
     return list(ips)
 
 
-def generate_ssl_cert(cert_dir: Path = Path("C:/drone-detect/ssl")) -> Tuple[str, str]:
+def generate_ssl_cert(cert_dir: Optional[Path] = None) -> Tuple[str, str]:
+    if cert_dir is None:
+        cert_dir = Path(__file__).parent / "config" / "ssl"
     """
     Generate (or reuse) a self-signed TLS certificate for HTTPS.
     Returns (cert_path, key_path).
